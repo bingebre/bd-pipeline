@@ -1,11 +1,10 @@
 """
 Grants.gov REST API Scraper.
 
-Uses the public search2 and fetchOpportunity endpoints (no auth required).
-Filters for grants relevant to digital tools, knowledge management,
-and technology modernization — excluding direct government operations.
+Uses the public search2 endpoint (no auth required).
 """
 import httpx
+import json
 from datetime import datetime
 from backend.scrapers.base import BaseScraper, RawLead
 from backend.config.settings import settings
@@ -13,18 +12,18 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Search keywords aligned with CC service offerings
+# Broader search keywords to get more results
 SEARCH_QUERIES = [
-    "knowledge management system",
-    "digital transformation nonprofit",
-    "interactive dashboard",
-    "data management tool",
-    "website redesign nonprofit",
-    "custom application development",
-    "digital storytelling",
-    "information architecture",
-    "data visualization platform",
-    "technology modernization",
+    "data management",
+    "digital",
+    "knowledge management",
+    "technology",
+    "dashboard",
+    "information system",
+    "nonprofit",
+    "storytelling",
+    "visualization",
+    "modernization",
 ]
 
 
@@ -57,7 +56,7 @@ class GrantsGovScraper(BaseScraper):
         """Execute a single search query against the Grants.gov API."""
         payload = {
             "keyword": keyword,
-            "oppStatuses": "posted",  # Only open opportunities
+            "oppStatuses": "posted",
             "rows": 25,
             "sortBy": "openDate|desc",
         }
@@ -70,16 +69,21 @@ class GrantsGovScraper(BaseScraper):
         response.raise_for_status()
         data = response.json()
 
+        # Log the response structure to debug
+        if not data.get("oppHits"):
+            # Try alternate response keys
+            possible_keys = [k for k in data.keys() if k != "totalCount"]
+            logger.info(f"Grants.gov response keys for '{keyword}': {list(data.keys())}, totalCount={data.get('totalCount', 'N/A')}")
+
         leads = []
         opportunities = data.get("oppHits", [])
 
         for opp in opportunities:
-            opp_id = opp.get("id", "")
+            opp_id = str(opp.get("id", ""))
             if opp_id in seen_ids:
                 continue
             seen_ids.add(opp_id)
 
-            # Build descriptive text from available fields
             title = opp.get("title", "Untitled")
             agency = opp.get("agencyCode", "")
             opp_number = opp.get("number", "")
@@ -95,13 +99,14 @@ class GrantsGovScraper(BaseScraper):
                 f"Description: {description}"
             )
 
-            # Parse dates
             published = None
             if open_date:
-                try:
-                    published = datetime.strptime(open_date[:10], "%m/%d/%Y")
-                except (ValueError, IndexError):
-                    pass
+                for fmt in ("%m/%d/%Y", "%Y-%m-%d", "%m-%d-%Y"):
+                    try:
+                        published = datetime.strptime(open_date[:10], fmt)
+                        break
+                    except (ValueError, IndexError):
+                        continue
 
             lead = RawLead(
                 title=title,
@@ -121,31 +126,3 @@ class GrantsGovScraper(BaseScraper):
             leads.append(lead)
 
         return leads
-
-    async def fetch_opportunity_detail(
-        self, client: httpx.AsyncClient, opp_id: str
-    ) -> dict:
-        """Fetch full details for a specific opportunity (for enrichment)."""
-        response = await client.get(
-            f"{self.base_url}/fetchOpportunity",
-            params={"oppId": opp_id},
-        )
-        response.raise_for_status()
-        return response.json()
-
-
-if __name__ == "__main__":
-    import asyncio
-
-    async def main():
-        scraper = GrantsGovScraper()
-        leads = await scraper.scrape()
-        print(f"\nTotal leads: {len(leads)}")
-        for lead in leads[:5]:
-            print(f"\n{'='*60}")
-            print(f"Title: {lead.title}")
-            print(f"Agency: {lead.org_name}")
-            print(f"URL: {lead.source_url}")
-            print(f"Pre-filter: {scraper.pre_filter(lead)}")
-
-    asyncio.run(main())
