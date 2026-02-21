@@ -70,10 +70,19 @@ class GrantsGovScraper(BaseScraper):
         data = response.json()
 
         # Log the response structure to debug
-        if not data.get("oppHits"):
-            # Try alternate response keys
-            possible_keys = [k for k in data.keys() if k != "totalCount"]
-            logger.info(f"Grants.gov response keys for '{keyword}': {list(data.keys())}, totalCount={data.get('totalCount', 'N/A')}")
+        logger.info(f"Grants.gov response keys for '{keyword}': {list(data.keys())}, totalCount={data.get('totalCount', 'N/A')}")
+        
+        # The API returns results under different keys depending on version
+        leads = []
+        opportunities = data.get("oppHits", [])
+        if not opportunities:
+            opportunities = data.get("data", [])
+            if isinstance(opportunities, dict):
+                opportunities = opportunities.get("oppHits", [])
+        if not opportunities:
+            # Log first 500 chars of response to understand the format
+            import json
+            logger.info(f"Grants.gov full response for '{keyword}': {json.dumps(data)[:500]}")
 
         leads = []
         opportunities = data.get("oppHits", [])
