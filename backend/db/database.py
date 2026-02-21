@@ -10,10 +10,13 @@ from backend.config.settings import settings
 
 engine = create_async_engine(
     settings.database_url,
-    poolclass=NullPool,  # Let Supabase Supavisor handle pooling
+    poolclass=NullPool,
     connect_args={
-        "statement_cache_size": 0,          # Required for Transaction Mode
-        "prepared_statement_cache_size": 0,  # Required for Transaction Mode
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
+        "server_settings": {
+            "plan_cache_mode": "force_custom_plan",
+        },
     },
     echo=False,
 )
