@@ -39,6 +39,20 @@ class ServiceMatch(str, enum.Enum):
     CUSTOM_APPLICATIONS = "custom_applications"
 
 
+# Reference the Postgres enum types created in schema.sql by their exact names
+lead_status_enum = SAEnum(
+    LeadStatus,
+    name="lead_status",        # Must match the CREATE TYPE name in schema.sql
+    create_type=False,         # Don't try to create it — it already exists in Supabase
+)
+
+source_type_enum = SAEnum(
+    SourceType,
+    name="source_type",        # Must match the CREATE TYPE name in schema.sql
+    create_type=False,
+)
+
+
 class Lead(Base):
     """A discovered BD opportunity."""
     __tablename__ = "leads"
@@ -57,7 +71,7 @@ class Lead(Base):
     summary = Column(Text)  # LLM-generated summary of the opportunity
     raw_text = Column(Text)  # Original scraped text for citation
     source_url = Column(String(2000))  # Link back to original source
-    source_type = Column(SAEnum(SourceType), nullable=False)
+    source_type = Column(source_type_enum, nullable=False)
     source_name = Column(String(200))  # e.g., "PND RFPs", "Grants.gov"
 
     # LLM Qualification
@@ -68,7 +82,7 @@ class Lead(Base):
     is_government = Column(Boolean, default=False)  # For exclusion filtering
 
     # Pipeline status
-    status = Column(SAEnum(LeadStatus), default=LeadStatus.NEW)
+    status = Column(lead_status_enum, default=LeadStatus.NEW)
     notes = Column(Text)  # BD team notes
 
     # Deduplication
@@ -93,7 +107,7 @@ class ScrapeRun(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     started_at = Column(DateTime, default=func.now(), nullable=False)
     completed_at = Column(DateTime)
-    source_type = Column(SAEnum(SourceType), nullable=False)
+    source_type = Column(source_type_enum, nullable=False)
     source_name = Column(String(200))
     items_found = Column(Integer, default=0)
     items_new = Column(Integer, default=0)
@@ -111,7 +125,7 @@ class SourceConfig(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(200), unique=True, nullable=False)
-    source_type = Column(SAEnum(SourceType), nullable=False)
+    source_type = Column(source_type_enum, nullable=False)
     url = Column(String(2000), nullable=False)
     is_active = Column(Boolean, default=True)
     last_scraped_at = Column(DateTime)
