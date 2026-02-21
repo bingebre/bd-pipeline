@@ -180,7 +180,7 @@ async def run_scrape_cycle(session: AsyncSession) -> dict:
                                 ) VALUES (
                                     :org_name, :org_type, :org_url, :title, :summary, :raw_text,
                                     :source_url, :source_type, :source_name, :confidence_score,
-                                    :relevance_reasoning, :service_matches::jsonb, :intent_signals::jsonb,
+                                    :relevance_reasoning, CAST(:service_matches AS jsonb), CAST(:intent_signals AS jsonb),
                                     :is_government, :content_hash, :scrape_run_id,
                                     :org_ein, :org_revenue, :org_assets, :org_city, :org_state
                                 )
