@@ -42,16 +42,17 @@ class ServiceMatch(str, enum.Enum):
 # Reference the Postgres enum types created in schema.sql by their exact names
 lead_status_enum = SAEnum(
     LeadStatus,
-    name="lead_status",        # Must match the CREATE TYPE name in schema.sql
-    create_type=False,         # Don't try to create it — it already exists in Supabase
+    name="lead_status",
+    create_type=False,
+    values_callable=lambda e: [member.value for member in e],
 )
 
 source_type_enum = SAEnum(
     SourceType,
-    name="source_type",        # Must match the CREATE TYPE name in schema.sql
+    name="source_type",
     create_type=False,
+    values_callable=lambda e: [member.value for member in e],
 )
-
 
 class Lead(Base):
     """A discovered BD opportunity."""
