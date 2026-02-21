@@ -122,6 +122,9 @@ async def run_scrape_cycle(session: AsyncSession) -> dict:
 
             # Step 4: Qualify with LLM (if API key is configured)
             qualified_count = 0
+            skipped_gov = 0
+            skipped_low = 0
+            skipped_fail = 0
             if settings.anthropic_api_key and new_leads:
                 for lead in new_leads:
                     try:
@@ -130,27 +133,41 @@ async def run_scrape_cycle(session: AsyncSession) -> dict:
                         logger.error(f"LLM qualification failed for '{lead.title}': {e}")
                         qualification = None
 
-                    if qualification:
-                        # Skip government entities
-                        if qualification.get("is_government", False):
-                            logger.debug(f"Skipping government entity: {lead.title}")
-                            continue
+                    if not qualification:
+                        skipped_fail += 1
+                        logger.info(f"  SKIP (no qualification): {lead.title}")
+                        continue
 
-                        # Skip low-confidence leads
-                        confidence = qualification.get("confidence_score", 0)
-                        if confidence < 0.2:
-                            continue
+                    # Skip government entities
+                    if qualification.get("is_government", False):
+                        skipped_gov += 1
+                        logger.info(f"  SKIP (government): {lead.title}")
+                        continue
 
-                        # Attempt ProPublica enrichment
-                        enrichment = None
-                        org_name = qualification.get("org_name") or lead.org_name
-                        if org_name:
-                            try:
-                                enrichment = await propublica.enrich_org(org_name)
-                            except Exception as e:
-                                logger.warning(f"ProPublica enrichment failed for '{org_name}': {e}")
+                    # Skip low-confidence leads
+                    confidence = qualification.get("confidence_score", 0)
+                    if confidence is None:
+                        confidence = 0
+                    confidence = float(confidence)
+                    if confidence < 0.2:
+                        skipped_low += 1
+                        logger.info(f"  SKIP (low confidence {confidence}): {lead.title}")
+                        continue
 
-                        # Store the lead using raw SQL to avoid enum issues
+                    logger.info(f"  QUALIFIED ({confidence}): {lead.title}")
+
+                    # Attempt ProPublica enrichment
+                    enrichment = None
+                    org_name = qualification.get("org_name") or lead.org_name
+                    if org_name:
+                        try:
+                            enrichment = await propublica.enrich_org(org_name)
+                        except Exception as e:
+                            logger.warning(f"ProPublica enrichment failed for '{org_name}': {e}")
+
+                    # Store the lead using raw SQL to avoid enum issues
+                    try:
+                        import json as json_mod
                         await session.execute(
                             text("""
                                 INSERT INTO leads (
@@ -179,8 +196,8 @@ async def run_scrape_cycle(session: AsyncSession) -> dict:
                                 "source_name": lead.source_name,
                                 "confidence_score": confidence,
                                 "relevance_reasoning": qualification.get("relevance_reasoning"),
-                                "service_matches": str(qualification.get("service_matches", [])).replace("'", '"'),
-                                "intent_signals": str(qualification.get("intent_signals", [])).replace("'", '"'),
+                                "service_matches": json_mod.dumps(qualification.get("service_matches", [])),
+                                "intent_signals": json_mod.dumps(qualification.get("intent_signals", [])),
                                 "is_government": qualification.get("is_government", False),
                                 "content_hash": lead.content_hash,
                                 "scrape_run_id": run_id,
@@ -192,8 +209,17 @@ async def run_scrape_cycle(session: AsyncSession) -> dict:
                             }
                         )
                         qualified_count += 1
+                        logger.info(f"  SAVED to DB: {lead.title}")
+                    except Exception as e:
+                        logger.error(f"  DB INSERT FAILED for '{lead.title}': {e}")
+                        await session.rollback()
+                        # Re-create the scrape run context after rollback
+                        await session.execute(
+                            text("SELECT 1")  # Reset transaction state
+                        )
             else:
                 # No API key — store all new leads without qualification
+                logger.info("No API key — storing all leads without LLM qualification")
                 for lead in new_leads:
                     await session.execute(
                         text("""
@@ -217,6 +243,8 @@ async def run_scrape_cycle(session: AsyncSession) -> dict:
                         }
                     )
                     qualified_count += 1
+
+            logger.info(f"[{scraper.name}] Summary: {qualified_count} qualified, {skipped_gov if 'skipped_gov' in dir() else '?'} gov, {skipped_low if 'skipped_low' in dir() else '?'} low-conf, {skipped_fail if 'skipped_fail' in dir() else '?'} failed")
 
             # Update the scrape run
             await session.execute(
