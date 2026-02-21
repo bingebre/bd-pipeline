@@ -149,7 +149,7 @@ async def run_scrape_cycle(session: AsyncSession) -> dict:
                     if confidence is None:
                         confidence = 0
                     confidence = float(confidence)
-                    if confidence < 0.2:
+                    if confidence < 0.1:
                         skipped_low += 1
                         logger.info(f"  SKIP (low confidence {confidence}): {lead.title}")
                         continue
