@@ -1,11 +1,5 @@
 """
 RSS Feed Scraper — ingests RFP portals and sector news feeds.
-
-Sources:
-  - Philanthropy News Digest (Candid) RFPs
-  - RFPdb feeds
-  - RFPMart (IT Services, Professional Consulting, Data/Records)
-  - Nonprofit Quarterly, TechSoup, NP Tech for Good (news signals)
 """
 import feedparser
 import httpx
@@ -23,13 +17,20 @@ class RSSFeedScraper(BaseScraper):
 
     def __init__(self, feed_urls: list[str] | None = None):
         super().__init__(name="RSS Feeds", source_type="rss_rfp")
-        self.feed_urls = feed_urls or settings.rss_feeds if hasattr(settings, 'rss_feeds') else []
+        self.feed_urls = feed_urls if feed_urls else []
 
     async def scrape(self) -> list[RawLead]:
         """Fetch all configured RSS feeds and extract leads."""
         all_leads = []
+        logger.info(f"RSS scraper has {len(self.feed_urls)} feed URLs to process")
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(
+            timeout=30.0,
+            follow_redirects=True,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; CitizenCodexBot/1.0; +https://citizencodex.com)"
+            }
+        ) as client:
             for feed_url in self.feed_urls:
                 try:
                     leads = await self._scrape_feed(client, feed_url)
@@ -42,17 +43,30 @@ class RSSFeedScraper(BaseScraper):
 
     async def _scrape_feed(self, client: httpx.AsyncClient, feed_url: str) -> list[RawLead]:
         """Fetch and parse a single RSS feed."""
-        response = await client.get(feed_url, follow_redirects=True)
+        response = await client.get(feed_url)
         response.raise_for_status()
 
-        feed = feedparser.parse(response.text)
-        leads = []
+        # Log response details for debugging
+        content_type = response.headers.get("content-type", "unknown")
+        body_length = len(response.text)
+        logger.info(f"Feed {feed_url}: status={response.status_code}, content-type={content_type}, body_length={body_length}")
 
+        # Log first 200 chars to see what we're getting
+        if body_length < 100:
+            logger.warning(f"Feed {feed_url}: very short response body: {response.text[:200]}")
+
+        feed = feedparser.parse(response.text)
+
+        # Log feed parse results
+        logger.info(f"Feed {feed_url}: feedparser found {len(feed.entries)} entries, bozo={feed.bozo}")
+        if feed.bozo and feed.bozo_exception:
+            logger.warning(f"Feed {feed_url}: feedparser error: {feed.bozo_exception}")
+
+        leads = []
         source_name = self._classify_source(feed_url)
         source_type = "rss_rfp" if "rfp" in feed_url.lower() or "rfpmart" in feed_url.lower() else "rss_news"
 
         for entry in feed.entries[:settings.max_results_per_source]:
-            # Extract content — prefer full content, fall back to summary
             raw_text = ""
             if hasattr(entry, "content") and entry.content:
                 raw_text = entry.content[0].get("value", "")
@@ -61,18 +75,13 @@ class RSSFeedScraper(BaseScraper):
             elif hasattr(entry, "description"):
                 raw_text = entry.description or ""
 
-            # Strip HTML tags for clean text
             raw_text = self._strip_html(raw_text)
-
-            # Parse published date
             published = self._parse_date(entry)
-
-            # Extract org name from title or content
             org_name = self._extract_org_name(entry.get("title", ""), raw_text)
 
             lead = RawLead(
                 title=entry.get("title", "Untitled"),
-                raw_text=raw_text[:5000],  # Cap at 5k chars
+                raw_text=raw_text[:5000],
                 source_url=entry.get("link", feed_url),
                 source_type=source_type,
                 source_name=source_name,
@@ -115,16 +124,13 @@ class RSSFeedScraper(BaseScraper):
     def _strip_html(self, text: str) -> str:
         """Remove HTML tags from text."""
         from html.parser import HTMLParser
-        from io import StringIO
 
         class _Stripper(HTMLParser):
             def __init__(self):
                 super().__init__()
                 self.fed = []
-
             def handle_data(self, d):
                 self.fed.append(d)
-
             def get_data(self):
                 return " ".join(self.fed)
 
@@ -145,34 +151,10 @@ class RSSFeedScraper(BaseScraper):
         return None
 
     def _extract_org_name(self, title: str, text: str) -> str:
-        """
-        Simple heuristic to extract org name from RFP title.
-        LLM will refine this later.
-        """
-        # Common patterns: "Org Name: RFP Title" or "Org Name - RFP Title"
+        """Simple heuristic to extract org name from RFP title."""
         for sep in [":", " - ", " — ", " | "]:
             if sep in title:
                 candidate = title.split(sep)[0].strip()
                 if len(candidate) > 3 and len(candidate) < 100:
                     return candidate
         return ""
-
-
-# Allow standalone execution for testing
-if __name__ == "__main__":
-    import asyncio
-
-    async def main():
-        scraper = RSSFeedScraper()
-        leads = await scraper.scrape()
-        for lead in leads[:5]:
-            print(f"\n{'='*60}")
-            print(f"Title: {lead.title}")
-            print(f"Org: {lead.org_name}")
-            print(f"Source: {lead.source_name}")
-            print(f"URL: {lead.source_url}")
-            print(f"Text: {lead.raw_text[:200]}...")
-            print(f"Hash: {lead.content_hash}")
-            print(f"Pre-filter pass: {scraper.pre_filter(lead)}")
-
-    asyncio.run(main())
