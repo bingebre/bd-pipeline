@@ -109,11 +109,12 @@ async def run_scrape_cycle(session: AsyncSession) -> dict:
             filtered = [lead for lead in raw_leads if scraper.pre_filter(lead)]
             logger.info(f"[{scraper.name}] {len(filtered)} passed pre-filter")
 
-            # Step 3: Deduplicate
+            # Step 3: Deduplicate using raw SQL (avoid prepared statement issues)
             new_leads = []
             for lead in filtered:
                 existing = (await session.execute(
-                    select(Lead).where(Lead.content_hash == lead.content_hash)
+                    text("SELECT id FROM leads WHERE content_hash = :hash LIMIT 1"),
+                    {"hash": lead.content_hash}
                 )).scalar_one_or_none()
                 if not existing:
                     new_leads.append(lead)
